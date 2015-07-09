@@ -1,7 +1,7 @@
 <!--ignore-->
-<!--export foo
+<!--pt:export foo
 bar-->
 
-A <!--import bar.pt--> walks into a <!--import foo-->
+A <!--pt:import bar.pt--> walks into a <!--pt:import foo-->
 
-<!--import test:README.md one-->
+<!--pt:import test:README.md one-->

@@ -2,6 +2,10 @@
 
 var fs = require('fs'),
     PATH = require('path'),
+    inspect = require('util').inspect,
+    inherits = require('util').inherits,
+    Readable = require('stream').Readable,
+    Transform = require('stream').Transform,
     PassThrough = require('stream').PassThrough,
     SpliceStream = require('streams2-splice');
 
@@ -21,220 +25,284 @@ module.exports = function (inFile, outFile, opts) {
     opts.start = opts.start || '<!--';
     opts.end = opts.end || '-->';
     
-    inFile = PATH.resolve(inFile);
-    
     var exports = { };
     
-    function partialtongue(cb) {
-        opts = opts || { };
-
-        var ss = new SpliceStream(opts.start, opts.end, processFile.bind(null, inFile));
-        var inStream = fs.createReadStream(inFile);
-        var outStream = outFile ? fs.createWriteStream(outFile) : process.stdout;
-
-        inStream.pipe(ss).pipe(outStream)
-        .on('error', function (err) { cb(err); })
-        .on('end', function () { cb(); });
+    function PTStream(inStream, filename) {
+        Transform.call(this);
+        
+        var inFile = PATH.resolve(filename);
+        
+        if (exports[inFile]) { throw new Error('Circular import: ' + inFile); }
+        
+        this.exports = { };
+        exports[inFile] = this;
+        
+        this.baseDir = PATH.dirname(filename);
+        
+        this.chunks = [ ];
+        this.capturing = '';
+        this.data = new Buffer(0);
+        
+        var ss = new SpliceStream(opts.start, opts.end, this.readToken.bind(this));
+        inStream.pipe(ss).pipe(this);
     }
-    function processFile(file, stream) {
-        debug('Processing %s', file);
-        var pt = new PassThrough();
-        
-        var buf = new Buffer(0), pos = 0, foundSomething = false;
-        
-        stream.on('data', seekDirective);
-        stream.on('error', finish);
-        stream.on('end', _onend);
-        pt.on('error', function (err) {
-            stream.emit('error', err);
-            pt.end();
-        });
-        
-        // accumulate data until we find a newline or the stream ends
-        function seekDirective(chunk) {
-            buf = Buffer.concat([ buf, chunk ]);
-            for (; pos < buf.length; pos++) {
-                if (buf[pos] === 0x0A) {
-                    debug('Found directive by newline');
-                    processDirective(buf.slice(0, pos).toString());
-                    return;
-                }
-            }
-        }
-        function _onend() {
-            if (!foundSomething) {
-                debug('Found directive by implication');
-                processDirective(buf.toString(), true);
-            }
-            finish();
-        }
-        function finish(err) {
-            debug('Wrapping up return stream');
-            stream.removeListener('data', seekDirective);
-            stream.removeListener('error', finish);
-            stream.removeListener('end', _onend);
-            if (err) { pt.emit('error', err); }
-        }
-        
-        function processDirective(directive, ended) {
-            debug('Got directive: %s', directive);
-            foundSomething = true;
-            stream.removeListener('data', seekDirective);
-            
-            var parts = directive.split(' ');
-            switch (parts.shift()) {
-                case 'import':
-                    if (!parts.length) {
-                        pt.emit('error', new Error('Invalid import directive: '+parts[0]));
-                        break;
-                    }
-                    
-                    var match = parts[0].match(/^([^:]+)(?::(.*))?$/);
-                    var pkg, path, name;
-                    
-                    if (!match) {
-                        pt.emit('error', new Error('Invalid import directive: '+parts[0]));
-                        break;
-                    }
-                    
-                    if (match[2]) {
-                        pkg = match[1];
-                        path = match[2];
-                    } else {
-                        pkg = null;
-                        path = match[1];
-                    }
-                    name = parts[1] || null;
-                    
-                    if (exports[path] && exports[path][name] && !Buffer.isBuffer(exports[path][name])) {
-                        pt.emit('error', new Error('Incomplete export: ' + pkg + ':' + path + ':' + name));
-                        break;
-                    }
-                    
-                    insertData(pt, pkg, path, name)
-                return;
-
-                case 'export':
-                    if (!parts.length) {
-                        pt.emit('error', new Error('Invalid export directive: '+parts[0]));
-                        break;
-                    }
-                    if (!exports[file]) { exports[file] = { }; }
-                    if (exports[file][parts[0]]) {
-                        pt.emit('error', new Error('Duplicate export: ' + file + ':' + name));
-                        break;
-                    }
-                    
-                    storeData(parts[0], ended);
-                return;
-            }
-            
-            ignoreData(ended);
-        }
-        
-        function insertData(stream, pkg, path, name, shouldExist) {
-            debug('Attempting to insert data (pkg=%s, path=%s, name=%s)', pkg, path, name);
-            if (exports[path] && exports[path][name]) {
-                stream.end(exports[path][name]);
-                return;
-            }
-            if (shouldExist) {
-                pt.emit('error', new Error('Can\'t locate export: ' + pkg + ':' + path + ':' + name));
-            }
-            
+    inherits(PTStream, Transform);
+    
+    PTStream.prototype.resolvePath = function (str) {
+        var matches = str.match(/^(.*?):(.*)$/), path, pkgDir;
+        if (!matches) {
+            path = PATH.resolve(str);
+        } else {
             try {
-                var baseDir = PATH.dirname(file);
-                if (pkg) {
-                    debug('Looking for "%s" in %s', pkg, baseDir);
-                    debug(resolve(pkg, baseDir));
-                    baseDir = PATH.dirname(resolve(pkg, baseDir));
-                }
-                
-                debug('baseDir: %s', baseDir);
-                
-                var inPath = PATH.resolve(baseDir, path);
-                debug('Resolved pathname: %s', inPath);
-                
-                var inStream = fs.createReadStream(inPath);
-                inStream.on('error', _tryLocalImport);
+                pkgDir = PATH.dirname(resolve(matches[1], this.baseDir));
             } catch (e) {
-                _tryLocalImport(e);
-            }
-            function _tryLocalImport(err) {
-                debug(err.message);
-                if (path !== null) {
-                    debug('Trying local import');
-                    insertData(stream, null, file, path, true);
-                    return;
-                }
-                pt.emit('error', err);
-            }
-            
-            if (!name) {
-                inStream.pipe(stream);
+                this.emit('error', e);
                 return;
             }
-            
-            var ss = new SpliceStream(opts.start, opts.end, processFile.bind(null, inPath));
-            inStream.pipe(ss, processFile.bind(null, path))
-            .on('end', function () {
-                debug('Retrying insertData');
-                insertData(stream, null, inPath, name, true);
-            })
-            .resume();
+            path = PATH.resolve(pkgDir, matches[2]);
         }
-        function storeData(name, ended) {
-            debug('Attempting to store data (path=%s, name=%s)', file, name);
-            var chunk = (pos+1 < buf.length ? buf.slice(pos+1) : buf);
-            exports[file][name] = [ chunk ];
+        
+        debug('PTStream.resolvePath: %s -> %s', str, path);
+        return path;
+    };
+    
+    PTStream.prototype._transform = function (chunk, encoding, callback) {
+        // store complete file data for wholesale inclusion
+        this.data = Buffer.concat([ this.data, chunk ]);
+        
+        // conditionally store partial file data for inclusion by reference
+        if (this.capturing) {
+            this.chunks.push(chunk);
+        }
+        
+        // pass along output
+        this.push(chunk);
+        callback();
+    };
+    PTStream.prototype.capture = function (name) {
+        if (this.capturing) {
+            this.stopCapture();
+        }
+        
+        if (!name) { throw new Error('PTStream.capture: Invalid capture name: ' + name); }
+        if (name in this.exports) { throw new Error('PTSTream.capture: Duplicate capture name: ' + name); }
+        
+        this.capturing = name;
+        this.chunks.length = 0;
+    };
+    PTStream.prototype.stopCapture = function () {
+        if (!this.capturing) { throw new Error('PTStream.stopCapture: not capturing'); }
+        
+        var str = Buffer.concat(this.chunks).toString();
+        str = str.replace(/^[\s\r\n]*((?:.|\r|\n)*?)[\s\r\n]*$/, '$1');
+        
+        this.storeExport(this.capturing, str);
+        this.capturing = '';
+        this.chunks.length = 0;
+    };
+    PTStream.prototype.storeExport = function (ref, data) {
+        debug('Storing export "%s": %s', ref, inspect(data));
+        if (ref in this.exports) {
+            this.emit('error', new Error('Duplicate ref: "'+ref+'"'));
+        } else {
+            this.exports[ref] = data;
+        }
+    };
+    PTStream.prototype.readToken = function (stream) {
+        var chunks = [ ], pt = new PassThrough();
+        
+        stream.on('data', chunks.push.bind(chunks))
+        stream.on('error', function (err) {
+            debug('PTStream.readToken error:', err);
+        });
+        stream.on('end', function () {
+            var buf = Buffer.concat(chunks),
+                str = buf.toString();
             
-            if (ended) { _finish(); }
-            else {
-                stream.removeListener('data', seekDirective);
-                stream.on('data', function (chunk) {
-                    exports[file][name].push(chunk);
+            chunks.length = 0;
+            
+            var replace = this.directive(str);
+            
+            if (replace instanceof Readable) {
+                debug('PTStream.readToken: piping stream');
+                replace.on('data', function (chunk) {
+                    debug('piping chunk', inspect(chunk.toString()));
                 });
-                stream.on('error', _finish);
-                stream.on('end', _finish);
-            }
-            function _finish(err) {
-                if (err) {
-                    debug('Error collecting data:', err);
-                    pt.emit('error', err);
+                replace.on('end', function () {
+                    debug('replace stream ended??');
+                });
+                replace.pipe(pt);
+            } else {
+                if (replace === null) { // ignore unrecognized directive
+                    debug('PTStream.readToken: ignoring');
+                    
+                    pt.write(opts.start);
+                    pt.write(buf);
+                    pt.write(opts.end);
+                } else if (typeof replace === 'string' || Buffer.isBuffer(replace)) {
+                    debug('PTStream.readToken: replacing data');
+                    pt.write(replace);
+                } else if (replace === void 0) {
+                    // empty replacement
                 } else {
-                    debug('Finishing export: %s %s', file, name);
-                    exports[file][name] = Buffer.concat(exports[file][name]);
+                    this.emit('error', new Error('Invalid replacement: ' + typeof replace));
                 }
                 pt.end();
             }
-        }
-        function ignoreData(ended) {
-            debug('Ignoring data');
-            
-            pt.write(opts.start);
-            pt.write(buf);
-            
-            if (ended) { _finish(); }
-            else {
-                stream.removeListener('data', seekDirective);
-            
-                stream.on('data', function (chunk) { pt.write(chunk); });
-                stream.on('error', _finish);
-                stream.on('end', _finish);
-            }
-            
-            function _finish(err) {
-                debug('ignoreData: on stream end');
-                stream.removeListener('error', _finish);
-                stream.removeListener('end', _finish);
-
-                if (err) { pt.emit('error', err); }
-                pt.end(opts.end);
-            }
-        }
+        }.bind(this));
         
         return pt;
-    }
+    };
+    PTStream.prototype.directive = function (str) {
+        debug('PTStream.directive:', inspect(str));
+        
+        var split, lastArg;
+        if (/\n/.test(str)) {
+            split = str.split('\n');
+            str = split.shift();
+            lastArg = split.join('\n');
+        }
+        
+        str = str.replace(/^[\s\r\n]*(.*?)[\s\r\n]*$/, '$1');
+
+        var matches = str.match(/^pt:(.+)/);
+        if (!matches) { return null; }
+
+        var args = matches[1].split(' '),
+            cmd = 'dir_'+args.shift();
+        
+        if (lastArg) { args.push(lastArg); }
+        
+        debug('Got directive: %s (%s)', cmd, args.map(inspect).join(', '));
+        
+        if (typeof this[cmd] !== 'function') {
+            debug('PTStream.directive: no such command: ' + cmd);
+            return;
+        } else {
+            return this[cmd].apply(this, args);
+        }
+    };
+    PTStream.prototype.dir_import = function (arg1, arg2) {
+        var path, stream, ptStream;
+        
+        if (arguments.length === 1) {
+            return this.dir_import1(arg1);
+        } else if (arguments.length === 2) {
+            return this.dir_import2(arg1, arg2);
+        } else {
+            var i = arguments.length, args = new Array(i);
+            while (i--) { args[i] = arguments[i]; }
+            
+            this.emit('error', new Error('PTStream.dir_import: invalid arguments: '+args));
+            return;
+        }
+    };
+    PTStream.prototype.dir_import1 = function (arg1) {
+        debug('PTStream.dir_import1('+arg1+')');
+        
+        // check for local reference
+        if (arg1 in this.exports) {
+            return this.exports[arg1];
+        }
+        
+        // check for file
+        var path = this.resolvePath(arg1), stream;
+        try {
+            stream = fs.createReadStream(path);
+        } catch (e) {
+            this.emit('error', new Error('PTStream.dir_import1: invalid reference (ref "'+arg1+'" doesn\'t exist)'));
+            return;
+        }
+        
+        // have we already loaded this file?
+        if (path in exports) {
+            // the whole file contents are stored when reading a file; in most cases
+            // interpolation blocks on the complete processing of a file, so we can
+            // rely on the .data property containing everything
+            // the exception is circular references, which are impossible to resolve
+            // in these cases, .data will contain only up to the "blocked" portion
+            // of the file. This behavior may not be what's expected, but it's the
+            // best that can be done
+            
+            return exports[path].data;
+        }
+        
+        // insert entire file with processing
+        return new PTStream(stream, path);
+    };
+    PTStream.prototype.dir_import2 = function (arg1, arg2) {
+        debug('PTStream.dir_import2('+arg1+', '+arg2+')');
+        
+        var path = this.resolvePath(arg1), stream;
+        
+        // have we already loaded/scanned this file?
+        if (path in exports) {
+            // does the reference exist?
+            if (arg2 in exports[path].exports) {
+                return exports[path].exports[arg2];
+            }
+            // fail
+            this.emit('error', new Error('PTStream.dir_import2: invalid reference (ref "'+arg2+'" doesn\'t exist)'));
+            return;
+        }
+        
+        // have to load the file; first check if it exists
+        try {
+            stream = fs.createReadStream(path);
+        } catch (e) {
+            // nope
+            this.emit('error', new Error('PTStream.dir_import2: invalid reference ('+e.code+')'));
+            return;
+        }
+        
+        // create a dummy stream to defer our data
+        var pt = new PassThrough();
+        
+        // load the file
+        debug('PTStream.dir_import2: loading %s', path);
+        var ptStream = new PTStream(stream, path);
+        
+        var _finish = function (err) {
+            ptStream.removeListener('error', _finish);
+            ptStream.removeListener('end', _finish);
+            
+            if (err) {
+                debug('PTStream.dir_import2: error', err);
+                this.emit('error', err);
+                pt.end();
+                return;
+            }
+            
+            debug('PTStream.dir_import2: finished');
+            
+            // our reference should exist now; call ourselves recursively to avoid repeating code
+            var result = this.dir_import2(arg1, arg2);
+            pt.end(result);
+        }.bind(this);
+        
+        ptStream.on('error', _finish);
+        ptStream.on('end', _finish);
+        
+        // enter flowing mode; we're not doing anything with the data, just reading in directives
+        ptStream.resume();
+        
+        return pt;
+    };
+    PTStream.prototype.dir_export = function (arg1, arg2) {
+        if (arguments.length === 1) {
+            // delimited data
+            this.capture(arg1);
+        } else if (arguments.length === 2) {
+            this.storeExport(arg1, arg2);
+        }
+    };
+    PTStream.prototype.dir_end = function () {
+        this.stopCapture();
+    };
     
-    return partialtongue;
+    return function (cb) {
+        var inStream = fs.createReadStream(inFile);
+        var ptStream = new PTStream(inStream, inFile);
+        ptStream.pipe(process.stdout);
+    };
 };
