@@ -17,12 +17,15 @@ try {
 }
 
 var resolve = (function () {
-    var resolveFilename = module.constructor._resolveFilename;
+    var Module = module.constructor;
+    
+    var resolveFilename = Module._resolveFilename,
+        nodeModulePaths = Module._nodeModulePaths;
+    
     return function (request, dir) {
+        var paths = nodeModulePaths(dir);
         debug('Resolving module "%s" from %s', request, dir);
-        return resolveFilename(request, {
-            paths: [ dir + '/node_modules' ]
-        });
+        return resolveFilename(request, { paths: paths });
     };
 })();
 
