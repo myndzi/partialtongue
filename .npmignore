@@ -1,0 +1,8 @@
+.git
+coverage
+node_modules
+test
+.jshintrc
+.gitignore
+.npmignore
+npm-debug.log

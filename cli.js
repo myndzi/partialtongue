@@ -1,3 +1,5 @@
+#!/usr/bin/env node
+
 'use strict';
 
 module.exports = function (argv, injected) {
@@ -66,7 +68,7 @@ if (require.main === module) {
         .nargs('prefix', 1);
 
     try {
-        module.exports(yargs.argv, require('./index'));
+        module.exports(yargs.argv, require('./partialtongue'));
     } catch (e) {
         if (e.message === 'No input source') {
             yargs.showHelp();

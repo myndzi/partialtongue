@@ -2,7 +2,7 @@
 
 require('should');
 
-var factory = require('../index');
+var factory = require('../partialtongue');
 
 var fs = require('fs'),
     PATH = require('path');

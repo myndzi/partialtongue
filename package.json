@@ -2,9 +2,11 @@
   "name": "partialtongue",
   "version": "1.0.0",
   "description": "Embed files, or parts of files, in other files",
-  "main": "index.js",
+  "main": "./lib/partialtongue.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "mocha test/*.test.js",
+    "report": "istanbul cover -x test -x node_modules node_modules/.bin/_mocha -- -u bdd -R spec --bail test/*.js;jshint partialtongue.js cli.js",
+    "lint": "jshint lib partialtongue.js cli.js"
   },
   "repository": {
     "type": "git",
