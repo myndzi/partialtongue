@@ -1,0 +1,4 @@
+<!--pt:export foo
+bar--><!--pt:import foo-->
+[pt:export foo
+bar][pt:import foo]

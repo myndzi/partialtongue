@@ -30,6 +30,7 @@ module.exports = function (opts) {
     opts = opts || { };
     opts.start = opts.start || '<!--';
     opts.end = opts.end || '-->';
+    opts.prefix = (opts.hasOwnProperty('prefix') ? opts.prefix : 'pt:');
     
     debug('Instantiated with options:', opts);
     
@@ -148,7 +149,7 @@ module.exports = function (opts) {
         if (!this.capturing) { throw new Error('PTStream.stopCapture: not capturing'); }
         
         var str = Buffer.concat(this.chunks).toString();
-        str = str.replace(/^[\s\r\n]*((?:.|\r|\n)*?)[\s\r\n]*$/, '$1');
+        //str = str.replace(/^[\s\r\n]*((?:.|\r|\n)*?)[\s\r\n]*$/, '$1');
         
         this.storeExport(this.capturing, str);
         this.capturing = '';
@@ -213,10 +214,13 @@ module.exports = function (opts) {
         
         str = str.replace(/^[\s\r\n]*(.*?)[\s\r\n]*$/, '$1');
 
-        var matches = str.match(/^pt:(.+)/);
-        if (!matches) { return null; }
+        if (str.slice(0, opts.prefix.length) !== opts.prefix) {
+            return null;
+        }
+        
+        str = str.slice(opts.prefix.length);
 
-        var args = matches[1].split(' '),
+        var args = str.split(' '),
             cmd = 'dir_'+args.shift();
         
         if (lastArg) { args.push(lastArg); }

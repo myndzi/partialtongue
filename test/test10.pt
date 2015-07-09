@@ -1,0 +1,4 @@
+<!--pt:export foo-->
+delimited reference
+<!--pt:end-->
+<!--pt:import foo-->

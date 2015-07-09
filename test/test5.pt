@@ -1,0 +1,4 @@
+<!--export foo
+bar--><!--import foo-->
+<!--#export foo
+bar--><!--#import foo-->
