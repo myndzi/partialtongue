@@ -8,6 +8,9 @@
     "report": "istanbul cover -x test -x node_modules node_modules/.bin/_mocha -- -u bdd -R spec --bail test/*.js;jshint partialtongue.js cli.js",
     "lint": "jshint lib partialtongue.js cli.js"
   },
+  "bin": {
+    "partialtongue": "./cli.js"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/myndzi/parseltongue.git"
