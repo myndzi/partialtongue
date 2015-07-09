@@ -31,6 +31,8 @@ module.exports = function (opts) {
     opts.start = opts.start || '<!--';
     opts.end = opts.end || '-->';
     
+    debug('Instantiated with options:', opts);
+    
     function Registry() {
         this.data = { };
     }
@@ -351,6 +353,8 @@ module.exports = function (opts) {
         var i = arguments.length, args = new Array(i);
         while (i--) { args[i] = arguments[i]; }
         
+        debug('partialtongue(%s)', args.map(inspect).join(', '));
+        
         var inFile = null,
             inDir = null,
             inStream = null,
@@ -363,30 +367,40 @@ module.exports = function (opts) {
             inDir = PATH.dirname(inFile);
             inFile = PATH.basename(inFile);
             inStream = fs.createReadStream(inFile);
+            debug('Reading from %s/%s', inDir, inFile);
         } else {
             args.shift();
             inStream = process.stdin;
             inDir = process.cwd();
             inFile = null;
+            debug('Reading from stdin');
         }
         
         if (typeof args[0] === 'string') {
             outFile = PATH.resolve(args.shift());
             outStream = fs.createWriteStream(outFile);
+            debug('Writing to %s', outFile);
         } else if (args[0] === null) {
             args.shift();
+            debug('Writing to returned stream');
         }
         
         if (typeof args[0] === 'function') {
             cb = args.shift();
+            debug('Bound callback');
         }
         
-        var ptStream = new PTStream(inStream, inDir, inFile);
+        var stream = new PTStream(inStream, inDir, inFile);
         
         if (outStream !== null) {
-            return ptStream.pipe(outStream);
-        } else {
-            return ptStream;
+            stream = stream.pipe(outStream);
         }
+        
+        if (cb) {
+            stream.on('error', cb);
+            stream.on('end', cb);
+        }
+        
+        return stream;
     };
 };
