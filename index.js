@@ -9,35 +9,82 @@ var fs = require('fs'),
     PassThrough = require('stream').PassThrough,
     SpliceStream = require('streams2-splice');
 
-var debug = require('debug')('partialtongue');
+var debug;
+try {
+    debug = require('debug')('partialtongue');
+} catch (e) {
+    debug = function () { };
+}
 
 var resolve = (function () {
     var resolveFilename = module.constructor._resolveFilename;
     return function (request, dir) {
+        debug('Resolving module "%s" from %s', request, dir);
         return resolveFilename(request, {
             paths: [ dir + '/node_modules' ]
         });
     };
 })();
 
-module.exports = function (inFile, outFile, opts) {
+module.exports = function (opts) {
     opts = opts || { };
     opts.start = opts.start || '<!--';
     opts.end = opts.end || '-->';
     
-    var exports = { };
+    function Registry() {
+        this.data = { };
+    }
+    Registry.getKey = function (path, name) {
+        if (name === null) {
+            return 'stream:'+path;
+        } else {
+            return 'file:'+path+'/'+name;
+        }
+    };
+    Registry.prototype.store = function (path, name, data) {
+        if (arguments.length === 2) {
+            data = name;
+            name = PATH.basename(path);
+            path = PATH.dirname(path);
+        }
+
+        var key = Registry.getKey(path, name);
+        if (key in this.data) { throw new Error('Registry.store: duplicate key: ' + key); }
+        this.data[Registry.getKey(path, name)] = data;
+    };
+    Registry.prototype.get = function (path, name) {
+        if (arguments.length === 1) {
+            name = PATH.basename(path);
+            path = PATH.dirname(path);
+        }
+
+        var key = Registry.getKey(path, name);
+        if (!(key in this.data)) { return null; }
+        return this.data[key];
+    };
     
-    function PTStream(inStream, filename) {
+    var EXPORTS = new Registry();
+    
+    function PTStream(inStream, baseDir, fileName) {
         Transform.call(this);
         
-        var inFile = PATH.resolve(filename);
+        if (arguments.length === 2) {
+            this.baseDir = PATH.resolve(baseDir);
+            this.fileName = PATH.basename(this.baseDir);
+            this.baseDir = PATH.dirname(this.baseDir);
+        } else {
+            this.baseDir = PATH.resolve(baseDir);
+            this.fileName = null;
+        }
+        var key = Registry.getKey(this.baseDir, this.fileName);
         
-        if (exports[inFile]) { throw new Error('Circular import: ' + inFile); }
+        if (EXPORTS.get(this.baseDir, this.fileName)) {
+            throw new Error('Circular import: ' + key);
+        }
         
         this.exports = { };
-        exports[inFile] = this;
         
-        this.baseDir = PATH.dirname(filename);
+        EXPORTS.store(this.baseDir, this.fileName, this);
         
         this.chunks = [ ];
         this.capturing = '';
@@ -215,7 +262,7 @@ module.exports = function (inFile, outFile, opts) {
         }
         
         // have we already loaded this file?
-        if (path in exports) {
+        if (EXPORTS.get(path)) {
             // the whole file contents are stored when reading a file; in most cases
             // interpolation blocks on the complete processing of a file, so we can
             // rely on the .data property containing everything
@@ -224,7 +271,7 @@ module.exports = function (inFile, outFile, opts) {
             // of the file. This behavior may not be what's expected, but it's the
             // best that can be done
             
-            return exports[path].data;
+            return EXPORTS.get(path).data;
         }
         
         // insert entire file with processing
@@ -236,10 +283,10 @@ module.exports = function (inFile, outFile, opts) {
         var path = this.resolvePath(arg1), stream;
         
         // have we already loaded/scanned this file?
-        if (path in exports) {
+        if (EXPORTS.get(path)) {
             // does the reference exist?
-            if (arg2 in exports[path].exports) {
-                return exports[path].exports[arg2];
+            if (arg2 in EXPORTS.get(path).exports) {
+                return EXPORTS.get(path).exports[arg2];
             }
             // fail
             this.emit('error', new Error('PTStream.dir_import2: invalid reference (ref "'+arg2+'" doesn\'t exist)'));
@@ -300,9 +347,46 @@ module.exports = function (inFile, outFile, opts) {
         this.stopCapture();
     };
     
-    return function (cb) {
-        var inStream = fs.createReadStream(inFile);
-        var ptStream = new PTStream(inStream, inFile);
-        ptStream.pipe(process.stdout);
+    return function (/*inFile[, outFile][, cb]*/) {
+        var i = arguments.length, args = new Array(i);
+        while (i--) { args[i] = arguments[i]; }
+        
+        var inFile = null,
+            inDir = null,
+            inStream = null,
+            outFile = null,
+            outStream = null,
+            cb = null;
+        
+        if (typeof args[0] === 'string') {
+            inFile = PATH.resolve(args.shift());
+            inDir = PATH.dirname(inFile);
+            inFile = PATH.basename(inFile);
+            inStream = fs.createReadStream(inFile);
+        } else {
+            args.shift();
+            inStream = process.stdin;
+            inDir = process.cwd();
+            inFile = null;
+        }
+        
+        if (typeof args[0] === 'string') {
+            outFile = PATH.resolve(args.shift());
+            outStream = fs.createWriteStream(outFile);
+        } else if (args[0] === null) {
+            args.shift();
+        }
+        
+        if (typeof args[0] === 'function') {
+            cb = args.shift();
+        }
+        
+        var ptStream = new PTStream(inStream, inDir, inFile);
+        
+        if (outStream !== null) {
+            return ptStream.pipe(outStream);
+        } else {
+            return ptStream;
+        }
     };
 };
