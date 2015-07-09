@@ -1,0 +1,7 @@
+<!--ignore-->
+<!--export foo
+bar-->
+
+A <!--import bar.pt--> walks into a <!--import foo-->
+
+<!--import test:README.md one-->

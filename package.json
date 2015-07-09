@@ -1,0 +1,29 @@
+{
+  "name": "partialtongue",
+  "version": "1.0.0",
+  "description": "Embed files, or parts of files, in other files",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/myndzi/parseltongue.git"
+  },
+  "keywords": [
+    "file",
+    "partial",
+    "embed",
+    "stream"
+  ],
+  "author": "Kris Reeves",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/myndzi/parseltongue/issues"
+  },
+  "homepage": "https://github.com/myndzi/parseltongue#readme",
+  "dependencies": {
+    "debug": "^2.2.0",
+    "streams2-splice": "^1.0.0"
+  }
+}
