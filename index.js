@@ -74,6 +74,9 @@ module.exports = function (opts) {
             this.baseDir = PATH.resolve(baseDir);
             this.fileName = PATH.basename(this.baseDir);
             this.baseDir = PATH.dirname(this.baseDir);
+        } else if (typeof fileName === 'string') {
+            this.baseDir = baseDir;
+            this.fileName = fileName;
         } else {
             this.baseDir = PATH.resolve(baseDir);
             this.fileName = null;
@@ -85,6 +88,8 @@ module.exports = function (opts) {
         }
         
         this.exports = { };
+        
+        debug('new PTStream(): baseDir: %s, fileName: %s', this.baseDir, this.fileName);
         
         EXPORTS.store(this.baseDir, this.fileName, this);
         
@@ -100,7 +105,7 @@ module.exports = function (opts) {
     PTStream.prototype.resolvePath = function (str) {
         var matches = str.match(/^(.*?):(.*)$/), path, pkgDir;
         if (!matches) {
-            path = PATH.resolve(str);
+            path = PATH.resolve(this.baseDir, str);
         } else {
             try {
                 pkgDir = PATH.dirname(resolve(matches[1], this.baseDir));
@@ -174,12 +179,6 @@ module.exports = function (opts) {
             
             if (replace instanceof Readable) {
                 debug('PTStream.readToken: piping stream');
-                replace.on('data', function (chunk) {
-                    debug('piping chunk', inspect(chunk.toString()));
-                });
-                replace.on('end', function () {
-                    debug('replace stream ended??');
-                });
                 replace.pipe(pt);
             } else {
                 if (replace === null) { // ignore unrecognized directive
@@ -349,58 +348,29 @@ module.exports = function (opts) {
         this.stopCapture();
     };
     
-    return function (/*inFile[, outFile][, cb]*/) {
+    return function (inStream, inDir, inFile) {
         var i = arguments.length, args = new Array(i);
         while (i--) { args[i] = arguments[i]; }
         
-        debug('partialtongue(%s)', args.map(inspect).join(', '));
+        if (arguments.length < 2) {
+            throw new Error('partialtongue: Invalid arguments: ' + arguments.map(inspect).join(', '));
+        }
+        if (!(inStream instanceof Readable)) {
+            throw new Error('partialtongue: inStream must be a readable stream');
+        }
+        if (typeof inDir !== 'string') {
+            throw new Error('partialtongue: invalid source dir: ' + inDir);
+        }
         
-        var inFile = null,
-            inDir = null,
-            inStream = null,
-            outFile = null,
-            outStream = null,
-            cb = null;
+        debug('partialtongue(<stream>, %s)', args.slice(1).map(inspect).join(', '));
         
-        if (typeof args[0] === 'string') {
-            inFile = PATH.resolve(args.shift());
-            inDir = PATH.dirname(inFile);
-            inFile = PATH.basename(inFile);
-            inStream = fs.createReadStream(inFile);
-            debug('Reading from %s/%s', inDir, inFile);
-        } else {
-            args.shift();
-            inStream = process.stdin;
-            inDir = process.cwd();
+        if (args.length === 2) {
+            inFile = PATH.basename(inDir);
+            inDir = PATH.dirname(inDir);
+        } else if (typeof inFile !== 'string') {
             inFile = null;
-            debug('Reading from stdin');
         }
         
-        if (typeof args[0] === 'string') {
-            outFile = PATH.resolve(args.shift());
-            outStream = fs.createWriteStream(outFile);
-            debug('Writing to %s', outFile);
-        } else if (args[0] === null) {
-            args.shift();
-            debug('Writing to returned stream');
-        }
-        
-        if (typeof args[0] === 'function') {
-            cb = args.shift();
-            debug('Bound callback');
-        }
-        
-        var stream = new PTStream(inStream, inDir, inFile);
-        
-        if (outStream !== null) {
-            stream = stream.pipe(outStream);
-        }
-        
-        if (cb) {
-            stream.on('error', cb);
-            stream.on('end', cb);
-        }
-        
-        return stream;
+        return new PTStream(inStream, inDir, inFile);
     };
 };

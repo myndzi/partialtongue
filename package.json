@@ -23,7 +23,8 @@
   },
   "homepage": "https://github.com/myndzi/parseltongue#readme",
   "dependencies": {
-    "streams2-splice": "^1.0.0"
+    "streams2-splice": "^1.0.0",
+    "yargs": "^3.15.0"
   },
   "devDependencies": {
     "debug": "^2.2.0",
