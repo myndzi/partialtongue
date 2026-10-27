@@ -1,3 +1,7 @@
+# Archived
+
+Legacy / unused
+
 # Partialtongue
 
 This module is a utility for inserting files or parts of files into other files. It doesn't care about the file formats, and allows you to specify both arbitrary delimiters and an arbitrary prefix for which items in those delimiters are to be processed. It can be used programmatically and as a command line tool, globally or locally installed. Partials can be referenced relative to the current file, or relative to a node dependency (via the module resolution process).
